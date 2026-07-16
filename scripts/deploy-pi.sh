@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-REPO_URL="${REPO_URL:-https://github.com/your-org/disposcan.git}"
+REPO_URL="${REPO_URL:-https://github.com/g39832/PI-tester.git}"
 REPO_DIR="${REPO_DIR:-/opt/disposcan}"
 KIOSK_URL="${KIOSK_URL:-http://localhost:3001}"
 BACKEND_PORT="${BACKEND_PORT:-3001}"
@@ -152,7 +152,7 @@ Environment=NODE_ENV=production
 Environment=PORT=$BACKEND_PORT
 Environment=WS_PORT=$WS_PORT
 Environment=DATABASE_PATH=$REPO_DIR/data/disposcan.db
-Environment=CORS_ORIGIN=http://localhost:5173
+# CORS_ORIGIN not needed — backend serves frontend in production
 Environment=REPORTS_DIR=$REPO_DIR/data/reports
 Environment=ATTACHMENTS_DIR=$REPO_DIR/data/attachments
 Environment=BACKUP_DIR=$REPO_DIR/data/backups
