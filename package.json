@@ -1,0 +1,20 @@
+{
+  "name": "dispo-diagnostic-station",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Raspberry Pi-powered diagnostic station for computer repair shops",
+  "scripts": {
+    "dev": "pnpm --parallel -r dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "test:coverage": "pnpm -r test:coverage",
+    "check": "pnpm lint && pnpm typecheck && pnpm test",
+    "clean": "pnpm -r clean"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  }
+}
