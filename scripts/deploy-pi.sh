@@ -180,28 +180,7 @@ User=$PI_USER
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=/home/$PI_USER/.Xauthority
 ExecStartPre=/bin/bash -c 'while ! curl -s http://localhost:$BACKEND_PORT/api/v1/health >/dev/null 2>&1; do sleep 1; done'
-ExecStart=/bin/bash -c '
-  xset s off 2>/dev/null || true
-  xset -dpms 2>/dev/null || true
-  xset s noblank 2>/dev/null || true
-  unclutter -idle 0.1 -root &
-  chromium-browser \
-    --kiosk \
-    --noerrdialogs \
-    --disable-session-crashed-bubble \
-    --disable-infobars \
-    --disable-restore-session-state \
-    --disable-features=TranslateUI \
-    --no-first-run \
-    --check-for-update-interval=604800 \
-    --touch-events=enabled \
-    --fast \
-    --fast-start \
-    --disable-pinch \
-    --overscroll-history-navigation=0 \
-    --disable-features=TouchpadOverscrollHistoryNavigation \
-    "$KIOSK_URL"
-'
+ExecStart=/bin/bash -c 'xset s off 2>/dev/null || true; xset -dpms 2>/dev/null || true; xset s noblank 2>/dev/null || true; unclutter -idle 0.1 -root & exec chromium-browser --kiosk --noerrdialogs --disable-session-crashed-bubble --disable-infobars --disable-restore-session-state --disable-features=TranslateUI --no-first-run --check-for-update-interval=604800 --touch-events=enabled --fast --fast-start --disable-pinch --overscroll-history-navigation=0 --disable-features=TouchpadOverscrollHistoryNavigation "$KIOSK_URL"'
 Restart=always
 RestartSec=5
 
