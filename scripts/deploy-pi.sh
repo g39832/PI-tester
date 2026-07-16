@@ -17,7 +17,7 @@ KIOSK_URL="${KIOSK_URL:-http://localhost:3001}"
 BACKEND_PORT="${BACKEND_PORT:-3001}"
 WS_PORT="${WS_PORT:-3002}"
 NODE_VERSION="${NODE_VERSION:-20}"
-PI_USER="${PI_USER:-pi}"
+PI_USER="${PI_USER:-$(logname 2>/dev/null || whoami)}"
 ADVERTISED_HOSTNAME="${ADVERTISED_HOSTNAME:-disposcan}"
 
 RED='\033[0;31m'
