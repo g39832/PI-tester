@@ -46,7 +46,7 @@ install_system_packages() {
     curl git build-essential \
     chromium-browser unclutter xdotool \
     xserver-xorg x11-xserver-utils xinit \
-    raspberrypi-ui-mods policykit-1 \
+    raspberrypi-ui-mods \
     avahi-daemon libnss-mdns \
     sqlite3 jq
 
