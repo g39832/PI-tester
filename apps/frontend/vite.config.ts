@@ -5,9 +5,9 @@ export default defineConfig(({ mode }) => ({
   plugins: [react()],
   build: {
     target: 'es2020',
-    minify: 'terser',
-    terserOptions: {
-      compress: { drop_console: mode === 'production', drop_debugger: true },
+    minify: 'esbuild',
+    esbuild: {
+      drop: mode === 'production' ? ['console', 'debugger'] : [],
     },
     rollupOptions: {
       output: {
