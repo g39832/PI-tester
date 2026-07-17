@@ -111,18 +111,31 @@ copy_bootloader() {
 
 download_kernel() {
   local kernel_deb="/tmp/linux-image-amd64.deb"
-  if [ ! -f "$kernel_deb" ]; then
-    log "Downloading Debian amd64 kernel..."
+  if [ ! -f "$kernel_deb" ] || [ "$(stat -c%s "$kernel_deb" 2>/dev/null || echo 0)" -lt 1000000 ]; then
+    log "Downloading Debian amd64 kernel (6.12)..."
+    rm -f "$kernel_deb"
+    # Known-good kernel URL from Debian trixie
     KERNEL_URL="https://deb.debian.org/debian/pool/main/l/linux/linux-image-6.12.21-amd64_6.12.21-1_amd64.deb"
-    # Try to find the latest kernel version
-    KERNEL_PKG=$(curl -sL "https://packages.debian.org/trixie/amd64/linux-image-amd64/download" 2>/dev/null | grep -oP 'href="[^"]*linux-image-[^"]*_amd64\.deb"' | head -1 | sed 's/href="//;s/"//')
-    if [ -n "$KERNEL_PKG" ]; then
-      KERNEL_URL="$KERNEL_PKG"
-    fi
-    wget -q "$KERNEL_URL" -O "$kernel_deb"
+    echo "  URL: $KERNEL_URL"
+    wget -q --timeout=30 "$KERNEL_URL" -O "$kernel_deb" || {
+      err "Failed to download kernel from primary source."
+      err "Trying alternative URL..."
+      KERNEL_URL="https://deb.debian.org/debian/pool/main/l/linux/linux-image-6.12.21-amd64_6.12.21-1_amd64.deb"
+      wget -q --timeout=30 "$KERNEL_URL" -O "$kernel_deb" || {
+        err "Kernel download failed. Run manually:"
+        err "  cd /tmp && wget $KERNEL_URL"
+        return 1
+      }
+    }
   fi
 
-  log "Extracting kernel..."
+  local size=$(stat -c%s "$kernel_deb" 2>/dev/null || echo 0)
+  if [ "$size" -lt 1000000 ]; then
+    err "Kernel package too small (${size}B). Download corrupted."
+    return 1
+  fi
+
+  log "Extracting kernel (${size}B)..."
   mkdir -p /tmp/kernel-extract
   cd /tmp/kernel-extract
   dpkg-deb -x "$kernel_deb" .
