@@ -14,7 +14,7 @@ collectorRouter.post('/network-boot', (req, res, next) => {
   try {
     const { lshwJson, dmidecode, smartctl } = req.body;
     if (!lshwJson) {
-      sendError(res, 400, 'Missing lshwJson');
+      sendError(res, { code: 'MISSING_DATA', message: 'Missing lshwJson' }, 400);
       return;
     }
 
@@ -33,22 +33,28 @@ collectorRouter.post('/network-boot', (req, res, next) => {
     const now = new Date().toISOString();
     const deviceId = uid();
 
-    db.prepare(`
+    const devStmt = db.prepare(`
       INSERT INTO devices (id, manufacturer, model, serial_number, cpu, ram_gb, storage_gb, storage_type, gpu, status, date_added, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'new_intake', ?, ?, ?)
-    `).bind([
+    `);
+    devStmt.bind([
       deviceId, manufacturer, model, serial || null,
       cpu, ramMb || null, storageGb || null, null, gpu || null,
       now, now, now,
-    ]).step();
+    ]);
+    devStmt.step();
+    devStmt.free();
 
     const sessionId = uid();
-    db.prepare(`
+    const sessStmt = db.prepare(`
       INSERT INTO diagnostic_sessions (id, device_id, session_code, payload, scan_mode, overall_status, started_at, created_at)
       VALUES (?, ?, ?, ?, 'deep', 'unknown', ?, ?)
-    `).bind([
+    `);
+    sessStmt.bind([
       sessionId, deviceId, 'pxe-boot', JSON.stringify(req.body), now, now,
-    ]).step();
+    ]);
+    sessStmt.step();
+    sessStmt.free();
 
     sendSuccess(res, { deviceId, sessionId, manufacturer, model, serial });
   } catch (err) {
