@@ -53,7 +53,7 @@ setup_dirs() {
 }
 
 configure_dnsmasq() {
-  log "Configuring dnsmasq for DHCP + TFTP..."
+  log "Configuring dnsmasq for PXE (integrating with Pi-hole / existing dnsmasq)..."
 
   # Find the Ethernet interface (not wlan0)
   ETH_IFACE=$(ip -o link show | awk -F': ' '{print $2}' | grep -v lo | grep -v wlan | head -1)
@@ -61,10 +61,19 @@ configure_dnsmasq() {
     ETH_IFACE="eth0"
   fi
 
-  cat > /etc/dnsmasq.d/disposcan-pxe.conf << CONF
-# DispoScan PXE Boot — DHCP + TFTP
+  # Bring interface up (even without cable)
+  ip link set "$ETH_IFACE" up 2>/dev/null || true
+
+  # If Pi-hole's dnsmasq is running, integrate with it
+  local DNSMASQ_D="/etc/dnsmasq.d"
+  mkdir -p "$DNSMASQ_D"
+
+  cat > "$DNSMASQ_D/disposcan-pxe.conf" << CONF
+# DispoScan PXE Boot — DHCP + TFTP on $ETH_IFACE only
+# This config is loaded by the existing dnsmasq (e.g., Pi-hole).
+# It only serves PXE requests on the isolated Ethernet port.
 interface=$ETH_IFACE
-bind-interfaces
+bind-dynamic
 domain=disposcan.local
 dhcp-range=192.168.2.10,192.168.2.100,12h
 dhcp-option=3,192.168.2.1
@@ -77,8 +86,19 @@ log-queries
 log-dhcp
 CONF
 
-  systemctl restart dnsmasq
-  systemctl enable dnsmasq
+  # Restart the existing dnsmasq (Pi-hole or standalone)
+  if systemctl is-active --quiet pihole-FTL 2>/dev/null; then
+    systemctl restart pihole-FTL
+    log "Restarted pihole-FTL with PXE config"
+  elif systemctl is-active --quiet dnsmasq 2>/dev/null; then
+    systemctl restart dnsmasq
+    log "Restarted dnsmasq with PXE config"
+  else
+    # No existing dnsmasq — start standalone
+    systemctl enable dnsmasq
+    systemctl restart dnsmasq
+    log "Started standalone dnsmasq with PXE config"
+  fi
 }
 
 copy_bootloader() {
