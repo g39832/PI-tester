@@ -1,6 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { env } from './config/env.js';
 import { requestLogger } from './middleware/requestLogger.js';
 import { errorHandler } from './middleware/errorHandler.js';
@@ -15,6 +17,9 @@ import { reportRouter } from './modules/reports/reports.routes.js';
 import { settingsRouter } from './modules/settings/settings.routes.js';
 import { backupRouter } from './modules/backup/backup.routes.js';
 import { logRouter } from './modules/logging/log.routes.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const FRONTEND_DIST = path.resolve(__dirname, '../../frontend/dist');
 
 const app = express();
 
@@ -35,6 +40,11 @@ app.use('/api/v1/reports', reportRouter);
 app.use('/api/v1/settings', settingsRouter);
 app.use('/api/v1/backup', backupRouter);
 app.use('/api/v1/logs', logRouter);
+
+app.use(express.static(FRONTEND_DIST));
+app.get('*', (_req, res) => {
+  res.sendFile(path.join(FRONTEND_DIST, 'index.html'));
+});
 
 app.use(errorHandler);
 
