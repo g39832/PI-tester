@@ -1,14 +1,8 @@
 #!/usr/bin/env bash
-# Build the DispoScan PXE diagnostic initramfs
+# Build the DispoScan PXE diagnostic initramfs (x86_64)
 #
-# Creates a minimal x86_64 Linux initramfs that:
-#   1. Boots into a busybox-based environment
-#   2. Auto-runs hardware diagnostics (lshw, dmidecode, smartctl)
-#   3. POSTs results to the DispoScan API
-#   4. Displays status on screen
-#
-# This script is called by setup-pxe.sh and can also be run
-# standalone to rebuild the initramfs.
+# Downloads x86_64 binaries from Debian amd64 .deb packages
+# so the initramfs can boot on any standard x86_64 laptop.
 #
 # Output: /tmp/initramfs-disposcan.gz
 
@@ -17,100 +11,104 @@ set -euo pipefail
 ROOTFS="/tmp/initramfs-root"
 OUTPUT="/tmp/initramfs-disposcan.gz"
 BACKEND_URL="${BACKEND_URL:-http://10.42.40.75:3001}"
+DEBIAN_MIRROR="${DEBIAN_MIRROR:-https://deb.debian.org/debian}"
+TEMP_DEB="/tmp/pxe-debs"
 
-rm -rf "$ROOTFS"
-mkdir -p "$ROOTFS"
-
-# ────────────────────────────────────────────────────────────
-# Create directory structure
-# ────────────────────────────────────────────────────────────
-mkdir -p "$ROOTFS"/{bin,sbin,etc,dev,proc,sys,mnt/root,tmp,newroot}
+rm -rf "$ROOTFS" "$TEMP_DEB"
+mkdir -p "$ROOTFS"/{bin,sbin,etc,dev,proc,sys,tmp,lib/x86_64-linux-gnu,usr/lib}
+mkdir -p "$TEMP_DEB"
 
 # ────────────────────────────────────────────────────────────
-# Download busybox (static, x86_64)
+# Download and extract x86_64 .deb packages
 # ────────────────────────────────────────────────────────────
-BUSYBOX_URL="https://busybox.net/downloads/binaries/1.36.1-x86_64-linux-musl/busybox"
-BUSYBOX_PATH="$ROOTFS/bin/busybox"
+download_deb() {
+  local pkg="$1"
+  local url="$DEBIAN_MIRROR/pool/main/$2"
+  local deb_file="$TEMP_DEB/${pkg}.deb"
 
-if [ ! -f "$BUSYBOX_PATH" ]; then
-  echo "Downloading busybox..."
-  wget -q "$BUSYBOX_URL" -O "$BUSYBOX_PATH" || {
-    # Fallback: try Debian busybox-static package
-    apt-get download busybox-static 2>/dev/null || true
-    dpkg-deb -x busybox-static*.deb "$ROOTFS" 2>/dev/null || true
-  }
-fi
+  if [ ! -f "$deb_file" ]; then
+    echo "  Downloading $pkg (amd64)..."
+    # Try to get the .deb URL via packages.debian.org
+    local pkg_url
+    pkg_url=$(curl -sL "https://packages.debian.org/trixie/amd64/${pkg}/download" 2>/dev/null | grep -oP 'href="[^"]*\.deb"' | head -1 | sed 's/href="//;s/"//')
+    if [ -n "$pkg_url" ]; then
+      wget -q --timeout=30 "$pkg_url" -O "$deb_file" || return 1
+    else
+      # Fallback: construct URL directly
+      wget -q --timeout=30 "$url" -O "$deb_file" || return 1
+    fi
+  fi
 
-if [ ! -f "$BUSYBOX_PATH" ]; then
-  echo "ERROR: Could not download busybox. Trying apt install..."
-  apt-get install -y busybox-static 2>/dev/null || true
-  cp /bin/busybox "$BUSYBOX_PATH" 2>/dev/null || true
-fi
+  echo "  Extracting $pkg..."
+  dpkg-deb -x "$deb_file" "$ROOTFS" 2>/dev/null || true
+}
 
-chmod +x "$BUSYBOX_PATH" 2>/dev/null || true
+echo ""
+echo "Downloading x86_64 tool binaries..."
 
-# Install busybox applets
-for applet in sh mount umount cat echo ls mkdir rm cp mv grep sed cut sort head tail dmesg ifconfig ip route udhcpc wget free lsusb lsblk blkid clear sleep printf kill modprobe insmod ln df; do
-  ln -sf /bin/busybox "$ROOTFS/bin/$applet" 2>/dev/null || true
-done
-
-# ────────────────────────────────────────────────────────────
-# Download static binaries for hardware diagnostics
-# ────────────────────────────────────────────────────────────
+# busybox-static (provides /bin/busybox for x86_64)
+download_deb "busybox-static" "b/busybox" || {
+  echo "ERROR: Failed to download busybox-static"
+  exit 1
+}
 
 # dmidecode
-if ! command -v dmidecode &>/dev/null; then
-  apt-get install -y dmidecode 2>/dev/null || true
-fi
-if [ -f /usr/sbin/dmidecode ]; then
-  cp /usr/sbin/dmidecode "$ROOTFS/bin/dmidecode" 2>/dev/null || true
-fi
+download_deb "dmidecode" "d/dmidecode" || true
 
-# lshw
-if ! command -v lshw &>/dev/null; then
-  apt-get install -y lshw 2>/dev/null || true
-fi
-if [ -f /usr/bin/lshw ]; then
-  cp /usr/bin/lshw "$ROOTFS/bin/lshw" 2>/dev/null || true
-fi
+# lshw (use lshw-static for static binary)
+download_deb "lshw-static" "l/lshw" || true
 
-# smartctl
-if ! command -v smartctl &>/dev/null; then
-  apt-get install -y smartmontools 2>/dev/null || true
-fi
-if [ -f /usr/sbin/smartctl ]; then
-  cp /usr/sbin/smartctl "$ROOTFS/bin/smartctl" 2>/dev/null || true
-fi
+# smartmontools
+download_deb "smartmontools" "s/smartmontools" || true
 
 # hdparm
-if ! command -v hdparm &>/dev/null; then
-  apt-get install -y hdparm 2>/dev/null || true
-fi
-if [ -f /sbin/hdparm ]; then
-  cp /sbin/hdparm "$ROOTFS/bin/hdparm" 2>/dev/null || true
-fi
+download_deb "hdparm" "h/hdparm" || true
 
-# Copy needed libraries for dynamic binaries
-mkdir -p "$ROOTFS/lib"
+# libc6 (x86_64) - needed for dynamically linked binaries
+download_deb "libc6" "g/glibc" || true
 
-# Try to copy libraries dynamically linked binaries need
-for bin in "$ROOTFS/bin/"*; do
-  if [ -f "$bin" ]; then
-    ldd "$bin" 2>/dev/null | awk '{print $3}' | grep -v '^$' | while read -r lib; do
-      if [ -f "$lib" ]; then
-        mkdir -p "$ROOTFS/$(dirname "${lib#/}")"
-        cp "$lib" "$ROOTFS$lib" 2>/dev/null || true
-      fi
-    done || true
+# libgcc-s1
+download_deb "libgcc-s1" "g/gcc-defaults" || true
+
+echo ""
+
+# ────────────────────────────────────────────────────────────
+# Move binaries to /bin for consistency
+# ────────────────────────────────────────────────────────────
+for f in "$ROOTFS/usr/sbin/"* "$ROOTFS/sbin/"*; do
+  if [ -f "$f" ] && [ ! -f "$ROOTFS/bin/$(basename "$f")" ]; then
+    cp "$f" "$ROOTFS/bin/" 2>/dev/null || true
   fi
 done
 
-# Also copy ld-linux
-cp /lib/*/ld-linux-x86-64* "$ROOTFS/lib/" 2>/dev/null || true
-cp /lib/x86_64-linux-gnu/libc.so* "$ROOTFS/lib/x86_64-linux-gnu/" 2>/dev/null || true
-cp /lib/x86_64-linux-gnu/libm.so* "$ROOTFS/lib/x86_64-linux-gnu/" 2>/dev/null || true
-cp /lib/x86_64-linux-gnu/libpthread.so* "$ROOTFS/lib/x86_64-linux-gnu/" 2>/dev/null || true
-cp /lib/x86_64-linux-gnu/libdl.so* "$ROOTFS/lib/x86_64-linux-gnu/" 2>/dev/null || true
+# If busybox wasn't found in the expected location, try alternatives
+if [ ! -f "$ROOTFS/bin/busybox" ]; then
+  find "$ROOTFS" -name 'busybox' -exec cp {} "$ROOTFS/bin/busybox" \; 2>/dev/null || true
+fi
+
+chmod +x "$ROOTFS/bin/busybox" 2>/dev/null || true
+
+# Install busybox applets
+if [ -f "$ROOTFS/bin/busybox" ]; then
+  for applet in sh mount umount cat echo ls mkdir rm cp mv grep sed cut sort head tail dmesg ifconfig ip route udhcpc wget free lsusb sleep clear printf kill modprobe insmod ln df blockdev poweroff; do
+    ln -sf /bin/busybox "$ROOTFS/bin/$applet" 2>/dev/null || true
+  done
+fi
+
+# Copy x86_64 libraries to the right place
+mkdir -p "$ROOTFS/lib/x86_64-linux-gnu"
+if [ -d "$ROOTFS/lib/x86_64-linux-gnu" ]; then
+  find "$ROOTFS" -name 'ld-linux-x86-64*' -exec cp {} "$ROOTFS/lib/" \; 2>/dev/null || true
+  find "$ROOTFS" -name 'libc.so*' -path '*/x86_64*' -exec cp {} "$ROOTFS/lib/x86_64-linux-gnu/" \; 2>/dev/null || true
+  find "$ROOTFS" -name 'libm.so*' -path '*/x86_64*' -exec cp {} "$ROOTFS/lib/x86_64-linux-gnu/" \; 2>/dev/null || true
+  find "$ROOTFS" -name 'libpthread.so*' -path '*/x86_64*' -exec cp {} "$ROOTFS/lib/x86_64-linux-gnu/" \; 2>/dev/null || true
+  find "$ROOTFS" -name 'libdl.so*' -path '*/x86_64*' -exec cp {} "$ROOTFS/lib/x86_64-linux-gnu/" \; 2>/dev/null || true
+  find "$ROOTFS" -name 'libgcc_s.so*' -exec cp {} "$ROOTFS/lib/x86_64-linux-gnu/" \; 2>/dev/null || true
+fi
+
+# Clean up unused architectures (remove ARM/ARM64 libs)
+find "$ROOTFS/lib" -name '*-linux-arm*' -type d -exec rm -rf {} + 2>/dev/null || true
+find "$ROOTFS/usr/lib" -name '*-linux-arm*' -type d -exec rm -rf {} + 2>/dev/null || true
 
 # ────────────────────────────────────────────────────────────
 # Write the /init script
@@ -118,102 +116,77 @@ cp /lib/x86_64-linux-gnu/libdl.so* "$ROOTFS/lib/x86_64-linux-gnu/" 2>/dev/null |
 cat > "$ROOTFS/init" << 'INITSCRIPT'
 #!/bin/sh
 
-# DispoScan PXE Diagnostic Boot
-# Auto-runs hardware probes and POSTs results to the backend
-
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 BACKEND_URL="${BACKEND_URL:-http://10.42.40.75:3001}"
+LOG="/tmp/disposcan.log"
 
 echo "╔══════════════════════════════════════════════╗"
 echo "║     DispoScan Hardware Diagnostics            ║"
 echo "║     Running hardware probes...                ║"
-echo "╚══════════════════════════════════════════════╝"
-echo ""
+echo "╚══════════════════════════════════════════════╝" | tee "$LOG"
 
 # Mount essential filesystems
 mount -t proc none /proc
 mount -t sysfs none /sys
 mount -t devtmpfs none /dev
 
-echo "[1/4] Detecting hardware..."
-
-# Determine hostname
-echo "disposcan-pxe" > /etc/hostname
-hostname -F /etc/hostname
+echo "[1/4] Detecting hardware..." | tee -a "$LOG"
 
 # Configure loopback
 ifconfig lo 127.0.0.1 up
 
 # Bring up Ethernet and get IP via DHCP
-echo "[2/4] Connecting to network..."
+echo "[2/4] Connecting to network..." | tee -a "$LOG"
 ifconfig eth0 0.0.0.0 up
 udhcpc -i eth0 -s /bin/sh -q -n 2>/dev/null || true
 
-# Try to get an IP (wait up to 10 seconds)
-for i in $(seq 1 10); do
+IP=""
+for i in 1 2 3 4 5 6 7 8 9 10; do
   IP=$(ip -4 addr show eth0 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d/ -f1)
-  if [ -n "$IP" ]; then
-    break
-  fi
+  if [ -n "$IP" ]; then break; fi
   sleep 1
 done
-
-echo "IP: ${IP:-DHCP failed (using link-local)}"
+echo "  IP: ${IP:-not assigned}" | tee -a "$LOG"
 
 # Hardware collection
-echo "[3/4] Collecting hardware data..."
+echo "[3/4] Collecting hardware data..." | tee -a "$LOG"
 
 # lshw - full hardware tree (JSON)
-LSHW_JSON=""
+LSHW_JSON="{}"
 if command -v lshw >/dev/null 2>&1; then
   LSHW_JSON=$(lshw -json 2>/dev/null || echo "{}")
-else
-  # Minimal hardware detection via /proc and /sys
-  LSHW_JSON="{ \"error\": \"lshw not available\" }"
 fi
 
-# dmidecode - DMI/SMBIOS table
+# dmidecode
 DMIDECODE_OUT=""
 if command -v dmidecode >/dev/null 2>&1; then
-  DMIDECODE_OUT=$(dmidecode 2>/dev/null || echo "dmidecode failed")
+  DMIDECODE_OUT=$(dmidecode 2>/dev/null || echo "")
 fi
 
-# CPU info from /proc/cpuinfo
+# CPU info
 CPU_INFO=$(cat /proc/cpuinfo 2>/dev/null || echo "")
-
-# Memory info
 MEM_TOTAL=$(free -m 2>/dev/null | grep Mem | awk '{print $2}' || echo "")
 MEM_INFO=$(cat /proc/meminfo 2>/dev/null || echo "")
 
-# Storage - look for drives
+# Storage
 STORAGE_INFO=""
+SMART_DATA=""
 for dev in /dev/sd[a-z] /dev/nvme[0-9]n[0-9] /dev/mmcblk[0-9]; do
   if [ -b "$dev" ]; then
     DEV_NAME=$(basename "$dev")
     SIZE=$(( $(blockdev --getsize64 "$dev" 2>/dev/null || echo 0) / 1024 / 1024 / 1024 ))
     MODEL=$(cat "/sys/block/$DEV_NAME/device/model" 2>/dev/null || echo "")
     VENDOR=$(cat "/sys/block/$DEV_NAME/device/vendor" 2>/dev/null || echo "")
-    STORAGE_INFO="${STORAGE_INFO}${DEV_NAME}: ${SIZE}GB ${VENDOR} ${MODEL}
-"
-
-    # SMART data
+    STORAGE_INFO="${STORAGE_INFO}${DEV_NAME}: ${SIZE}GB ${VENDOR} ${MODEL}"$'\n'
     if command -v smartctl >/dev/null 2>&1; then
-      SMART_DATA=$(smartctl -a "$dev" 2>/dev/null || true)
+      SMART_DATA="${SMART_DATA}$DEV_NAME: $(smartctl -H "$dev" 2>/dev/null | grep 'SMART overall-health' || echo 'N/A')"$'\n'
     fi
   fi
 done
 
-# PCI devices
+# PCI / USB
 PCI_INFO=$(cat /proc/bus/pci/devices 2>/dev/null || lspci 2>/dev/null || echo "")
-
-# USB devices
 USB_INFO=$(lsusb 2>/dev/null || echo "")
-
-# GPU - get from /proc or lshw
-GPU_INFO=""
-if command -v lshw >/dev/null 2>&1; then
-  GPU_INFO=$(echo "$LSHW_JSON" | grep -o '"product":"[^"]*"' | head -5 || echo "")
-fi
 
 # Build JSON payload
 PAYLOAD=$(cat << PAYLOAD_EOF
@@ -224,6 +197,7 @@ PAYLOAD=$(cat << PAYLOAD_EOF
   "memTotalMb": "${MEM_TOTAL}",
   "memInfo": $(echo "$MEM_INFO" | head -30 | tr -d '\n' | sed 's/"/\\"/g' | awk '{printf "\"%s\"", $0}'),
   "storage": $(echo "$STORAGE_INFO" | tr -d '\n' | sed 's/"/\\"/g' | awk '{printf "\"%s\"", $0}'),
+  "smartData": $(echo "$SMART_DATA" | tr -d '\n' | sed 's/"/\\"/g' | awk '{printf "\"%s\"", $0}'),
   "pciDevices": $(echo "$PCI_INFO" | head -50 | tr -d '\n' | sed 's/"/\\"/g' | awk '{printf "\"%s\"", $0}'),
   "usbDevices": $(echo "$USB_INFO" | head -30 | tr -d '\n' | sed 's/"/\\"/g' | awk '{printf "\"%s\"", $0}'),
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
@@ -232,67 +206,64 @@ PAYLOAD=$(cat << PAYLOAD_EOF
 PAYLOAD_EOF
 )
 
-# Save payload for debugging
 echo "$PAYLOAD" > /tmp/payload.json 2>/dev/null || true
 
 # Send to backend
-echo "[4/4] Sending results to DispoScan server..."
-echo ""
+echo "[4/4] Sending results to DispoScan server..." | tee -a "$LOG"
+echo "" | tee -a "$LOG"
 
 RESULT=""
 if command -v wget >/dev/null 2>&1; then
   RESULT=$(wget -q -O- --post-data="$PAYLOAD" --header="Content-Type: application/json" "$BACKEND_URL/api/v1/collector/network-boot" 2>/dev/null || echo "FAILED")
 fi
 
-echo ""
-echo "╔══════════════════════════════════════════════╗"
-echo "║     DispoScan Diagnostics Complete            ║"
-echo "║                                              ║"
+echo "" >> "$LOG"
 if echo "$RESULT" | grep -q '"deviceId"'; then
-  echo "║  ✓ Results sent successfully!                ║"
+  echo "  ✓ Results sent successfully!" | tee -a "$LOG"
   DEVICE_ID=$(echo "$RESULT" | grep -o '"deviceId":"[^"]*"' | cut -d'"' -f4)
-  echo "║  Device ID: $DEVICE_ID"
+  echo "  Device ID: $DEVICE_ID" | tee -a "$LOG"
 else
-  echo "║  ⚠ Results may not have been sent             ║"
-  echo "║  Check that the Pi is reachable at:           ║"
-  echo "║    $BACKEND_URL"
+  echo "  ⚠ Failed to send results" | tee -a "$LOG"
+  echo "  Check Pi is reachable at: $BACKEND_URL" | tee -a "$LOG"
 fi
-echo "║                                              ║"
-echo "║  You can now power off this computer.         ║"
-echo "╚══════════════════════════════════════════════╝"
-echo ""
 
-# Keep display up for 30 seconds then power off
+echo "" | tee -a "$LOG"
+echo "╔══════════════════════════════════════════════╗" | tee -a "$LOG"
+echo "║     Diagnostics Complete — You can power off  ║" | tee -a "$LOG"
+echo "╚══════════════════════════════════════════════╝" | tee -a "$LOG"
+
+# Show on screen for 30 seconds, then power off
 sleep 30
-echo "Powering off..."
+echo "Powering off..." | tee -a "$LOG"
 poweroff -f
 INITSCRIPT
 
 chmod +x "$ROOTFS/init"
 
 # ────────────────────────────────────────────────────────────
-# Create essential device nodes (some kernels need this)
+# Device nodes
 # ────────────────────────────────────────────────────────────
 mknod -m 0666 "$ROOTFS/dev/null" c 1 3 2>/dev/null || true
 mknod -m 0600 "$ROOTFS/dev/console" c 5 1 2>/dev/null || true
 
 # ────────────────────────────────────────────────────────────
-# /etc/resolv.conf for DNS
+# Network config
 # ────────────────────────────────────────────────────────────
 echo "nameserver 8.8.8.8" > "$ROOTFS/etc/resolv.conf"
 echo "nameserver 1.1.1.1" >> "$ROOTFS/etc/resolv.conf"
-
-# ────────────────────────────────────────────────────────────
-# /etc/hosts
-# ────────────────────────────────────────────────────────────
 echo "127.0.0.1 localhost" > "$ROOTFS/etc/hosts"
 
 # ────────────────────────────────────────────────────────────
 # Pack initramfs
 # ────────────────────────────────────────────────────────────
+echo ""
 echo "Packing initramfs..."
 cd "$ROOTFS"
 find . | cpio -H newc -o 2>/dev/null | gzip -9 > "$OUTPUT"
 cd /
 
-echo "Initramfs built: $OUTPUT ($(du -h "$OUTPUT" | cut -f1))"
+SIZE=$(du -h "$OUTPUT" | cut -f1)
+echo "Done: $OUTPUT ($SIZE)"
+
+# Cleanup
+rm -rf "$TEMP_DEB"
