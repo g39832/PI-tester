@@ -110,39 +110,40 @@ copy_bootloader() {
 }
 
 download_kernel() {
-  local kernel_deb="/tmp/linux-image-amd64.deb"
-  if [ ! -f "$kernel_deb" ] || [ "$(stat -c%s "$kernel_deb" 2>/dev/null || echo 0)" -lt 1000000 ]; then
-    log "Downloading Debian amd64 kernel (6.12)..."
-    rm -f "$kernel_deb"
-    # Known-good kernel URL from Debian trixie
-    KERNEL_URL="https://deb.debian.org/debian/pool/main/l/linux/linux-image-6.12.21-amd64_6.12.21-1_amd64.deb"
-    echo "  URL: $KERNEL_URL"
-    wget -q --timeout=30 "$KERNEL_URL" -O "$kernel_deb" || {
-      err "Failed to download kernel from primary source."
-      err "Trying alternative URL..."
-      KERNEL_URL="https://deb.debian.org/debian/pool/main/l/linux/linux-image-6.12.21-amd64_6.12.21-1_amd64.deb"
-      wget -q --timeout=30 "$KERNEL_URL" -O "$kernel_deb" || {
-        err "Kernel download failed. Run manually:"
-        err "  cd /tmp && wget $KERNEL_URL"
-        return 1
-      }
-    }
+  local kernel_out="$TFTP_ROOT/boot/vmlinuz-disposcan"
+  if [ -f "$kernel_out" ] && [ "$(stat -c%s "$kernel_out" 2>/dev/null || echo 0)" -gt 5000000 ]; then
+    log "Kernel already exists at $kernel_out"
+    return 0
   fi
 
-  local size=$(stat -c%s "$kernel_deb" 2>/dev/null || echo 0)
-  if [ "$size" -lt 1000000 ]; then
-    err "Kernel package too small (${size}B). Download corrupted."
+  log "Downloading Debian netboot kernel (amd64)..."
+  # Use Debian installer's netboot kernel — guaranteed to work with PXE
+  local KERNEL_URL="https://ftp.debian.org/debian/dists/trixie/main/installer-amd64/current/images/netboot/debian-installer/amd64/linux"
+  echo "  URL: $KERNEL_URL"
+  wget -q --timeout=60 "$KERNEL_URL" -O "$kernel_out" || {
+    # Fallback to security.debian.org kernel package
+    err "Netboot kernel download failed, trying package approach..."
+    local kernel_deb="/tmp/linux-image-amd64.deb"
+    KERNEL_URL="https://security.debian.org/debian-security/pool/updates/main/l/linux-signed-amd64/linux-image-6.12.95-amd64_6.12.95-1_amd64.deb"
+    wget -q --timeout=60 "$KERNEL_URL" -O "$kernel_deb" || {
+      err "Kernel download failed."
+      err "Try manually: cd /tmp && wget https://ftp.debian.org/debian/dists/trixie/main/installer-amd64/current/images/netboot/debian-installer/amd64/linux"
+      return 1
+    }
+    mkdir -p /tmp/kernel-extract
+    cd /tmp/kernel-extract
+    dpkg-deb -x "$kernel_deb" .
+    find . -name 'vmlinuz-*' -exec cp {} "$kernel_out" \;
+    cd /
+    rm -rf /tmp/kernel-extract
+  }
+
+  if [ -f "$kernel_out" ] && [ "$(stat -c%s "$kernel_out" 2>/dev/null || echo 0)" -gt 5000000 ]; then
+    log "Kernel extracted to $kernel_out ($(stat -c%s "$kernel_out")B)"
+  else
+    err "Kernel file is too small or missing."
     return 1
   fi
-
-  log "Extracting kernel (${size}B)..."
-  mkdir -p /tmp/kernel-extract
-  cd /tmp/kernel-extract
-  dpkg-deb -x "$kernel_deb" .
-  find . -name 'vmlinuz-*' -exec cp {} "$TFTP_ROOT/boot/vmlinuz-disposcan" \;
-  cd /
-  rm -rf /tmp/kernel-extract
-  log "Kernel extracted to $TFTP_ROOT/boot/vmlinuz-disposcan"
 }
 
 write_pxelinux_config() {
