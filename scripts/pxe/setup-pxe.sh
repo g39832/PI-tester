@@ -149,7 +149,9 @@ CFG
 
 build_initramfs() {
   log "Building diagnostic initramfs (this may take a minute)..."
-  bash "$PXE_DIR/build-initramfs.sh"
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  bash "$script_dir/build-initramfs.sh"
   cp /tmp/initramfs-disposcan.gz "$TFTP_ROOT/boot/initramfs-disposcan.gz"
   log "Initramfs built and copied to $TFTP_ROOT/boot/initramfs-disposcan.gz"
 }
