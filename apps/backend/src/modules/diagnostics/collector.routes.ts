@@ -1,9 +1,60 @@
 import { Router } from 'express';
 import { getSqlite } from '@dds/database';
 import { getSessionCode } from '../../ws/sessionCode.js';
-import { sendSuccess } from '../../shared/response.js';
+import { sendSuccess, sendError } from '../../shared/response.js';
+import crypto from 'crypto';
+
+function uid(): string {
+  return crypto.randomUUID();
+}
 
 export const collectorRouter = Router();
+
+collectorRouter.post('/network-boot', (req, res, next) => {
+  try {
+    const { lshwJson, dmidecode, smartctl } = req.body;
+    if (!lshwJson) {
+      sendError(res, 400, 'Missing lshwJson');
+      return;
+    }
+
+    const hw = typeof lshwJson === 'string' ? JSON.parse(lshwJson) : lshwJson;
+    const dmi = typeof dmidecode === 'string' ? dmidecode : '';
+
+    const manufacturer = hw?.product?.vendor || hw?.system?.manufacturer || '';
+    const model = hw?.product?.product || hw?.system?.product || '';
+    const serial = hw?.product?.serial || hw?.system?.serial || '';
+    const cpu = hw?.cpu?.[0]?.product || '';
+    const ramMb = hw?.memory?.description === 'System Memory' ? Math.round((hw.memory.size || 0) / 1024 / 1024) : 0;
+    const storageGb = hw?.disk?.size ? Math.round(hw.disk.size / 1024 / 1024 / 1024) : 0;
+    const gpu = hw?.display?.[0]?.product || hw?.display?.product || '';
+
+    const db = getSqlite();
+    const now = new Date().toISOString();
+    const deviceId = uid();
+
+    db.prepare(`
+      INSERT INTO devices (id, manufacturer, model, serial_number, cpu, ram_gb, storage_gb, storage_type, gpu, status, date_added, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'new_intake', ?, ?, ?)
+    `).bind([
+      deviceId, manufacturer, model, serial || null,
+      cpu, ramMb || null, storageGb || null, null, gpu || null,
+      now, now, now,
+    ]).step();
+
+    const sessionId = uid();
+    db.prepare(`
+      INSERT INTO diagnostic_sessions (id, device_id, session_code, payload, scan_mode, overall_status, started_at, created_at)
+      VALUES (?, ?, ?, ?, 'deep', 'unknown', ?, ?)
+    `).bind([
+      sessionId, deviceId, 'pxe-boot', JSON.stringify(req.body), now, now,
+    ]).step();
+
+    sendSuccess(res, { deviceId, sessionId, manufacturer, model, serial });
+  } catch (err) {
+    next(err);
+  }
+});
 
 collectorRouter.get('/current', (_req, res, next) => {
   try {
